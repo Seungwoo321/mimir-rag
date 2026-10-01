@@ -12,7 +12,10 @@ uv run mypy src
 uv run pytest -q
 uv run python -m build
 uv run python scripts/validate_package.py
-claude plugin validate . --strict
+claude plugin validate .claude-plugin/marketplace.json --strict
+claude plugin validate .claude-plugin/plugin.json --strict
+claude plugin validate commands --strict
+claude plugin validate skills --strict
 ```
 
 Tests use synthetic documents and deterministic embedding/synthesis doubles. Provider HTTP tests use mock transports and validate actual request payloads, timeout retries, refusal handling, and output decoding. They never read a user's books, discover secrets, or call a paid endpoint. A passing offline suite establishes application contracts, not current provider availability or model grounding accuracy on arbitrary books.

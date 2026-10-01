@@ -12,6 +12,7 @@ from typing import Any
 from . import __version__
 from .config import Settings
 from .errors import MimirError
+from .evidence_session import EvidenceSessions
 from .generator import Generator
 from .ingestor import Ingestor
 from .providers import ProviderClient
@@ -22,7 +23,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mimir-rag",
         description=(
-            "Personal-library search with verified citations. Cloud inference sends source text."
+            "Local personal-library retrieval and host-agent grounded answer verification."
         ),
     )
     parser.add_argument("--version", action="version", version=__version__)
@@ -33,12 +34,19 @@ def _parser() -> argparse.ArgumentParser:
     ingest.add_argument("--title")
     ingest.add_argument("--author")
     ingest.add_argument("--rights", default="user-authorized personal processing")
-    ask = commands.add_parser(
-        "ask", help="Retrieve, synthesize and independently review an answer."
-    )
-    ask.add_argument("question", nargs="+")
-    ask.add_argument("--top-k", type=int)
-    ask.add_argument("--json", action="store_true", help="Output answer and source IDs as JSON.")
+    for name in ("ask", "retrieve"):
+        ask = commands.add_parser(name, help="Retrieve evidence for a host-agent answer.")
+        ask.add_argument("question", nargs="+")
+        ask.add_argument("--top-k", type=int)
+        ask.add_argument("--json", action="store_true", help="Output structured evidence JSON.")
+    for name in ("review-context", "verify"):
+        verification = commands.add_parser(name, help="Validate a bound host-agent proposal.")
+        verification.add_argument("--session", required=True)
+        verification.add_argument("--evidence-hash", required=True)
+        verification.add_argument("--proposal", required=True, type=Path)
+        if name == "verify":
+            verification.add_argument("--review", required=True, type=Path)
+        verification.add_argument("--json", action="store_true")
     commands.add_parser("list", help="List indexed documents without provider calls.")
     graph = commands.add_parser("graph", help="Inspect source-backed concepts and co-occurrence.")
     graph.add_argument("--document-id")
@@ -55,7 +63,6 @@ async def _run(args: argparse.Namespace) -> int:
             {
                 **settings.model_dump(),
                 "db_path": args.db,
-                "openai_api_key": settings.openai_api_key,
                 "anthropic_api_key": settings.anthropic_api_key,
             }
         )
@@ -68,13 +75,15 @@ async def _run(args: argparse.Namespace) -> int:
             "python": sys.version.split()[0],
             "sqlite": sqlite3.sqlite_version,
             "database": str(settings.db_path),
+            "embedding_provider": "local",
             "embedding_model": settings.embedding_model,
             "embedding_dimensions": settings.embedding_dimensions,
             "synthesis_provider": settings.synthesis_provider,
             "synthesis_model": settings.synthesis_model,
-            "openai_key_present": bool(settings.openai_api_key),
             "anthropic_key_present": bool(settings.anthropic_api_key),
-            "privacy": "Local plaintext storage; cloud inference sends selected text.",
+            "privacy": (
+                "Local embedding and plaintext storage; Claude synthesis receives selected text."
+            ),
         }
     elif args.command == "list":
         payload = [document.model_dump() for document in await store.list_documents()]
@@ -96,10 +105,24 @@ async def _run(args: argparse.Namespace) -> int:
                 )
                 payload = result.model_dump()
             else:
-                answer = await Generator(settings, store, provider).ask(
-                    " ".join(args.question),
-                    top_k=args.top_k,
-                )
+                generator = Generator(settings, store, provider)
+                sessions = EvidenceSessions(generator)
+                if args.command == "verify":
+                    answer = await sessions.verify(
+                        args.session, args.evidence_hash, args.proposal, args.review
+                    )
+                elif args.command == "review-context":
+                    payload = await sessions.review_context(
+                        args.session, args.evidence_hash, args.proposal
+                    )
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return 0
+                elif args.command == "retrieve" or settings.synthesis_provider == "agent":
+                    payload = await sessions.retrieve(" ".join(args.question), args.top_k)
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return 3 if payload["abstained"] else 0
+                else:
+                    answer = await generator.ask(" ".join(args.question), top_k=args.top_k)
                 if not args.json:
                     print(answer.markdown)
                     return 3 if answer.abstained else 0

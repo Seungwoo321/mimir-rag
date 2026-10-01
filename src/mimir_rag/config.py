@@ -20,12 +20,18 @@ class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     db_path: Path = Field(default_factory=_default_db_path)
-    openai_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
     anthropic_api_key: SecretStr | None = Field(default=None, exclude=True, repr=False)
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = Field(default=1536, ge=1, le=3072)
-    synthesis_provider: Literal["openai", "anthropic"] = "openai"
-    synthesis_model: str = "gpt-4.1-mini"
+    embedding_model: Literal["intfloat/multilingual-e5-small"] = "intfloat/multilingual-e5-small"
+    embedding_revision: Literal["614241f622f53c4eeff9890bdc4f31cfecc418b3"] = (
+        "614241f622f53c4eeff9890bdc4f31cfecc418b3"
+    )
+    embedding_dimensions: int = Field(default=384, ge=1, le=3072)
+    embedding_device: Literal["auto", "cpu", "mps"] = "auto"
+    embedding_window_tokens: int = Field(default=512, ge=32, le=512)
+    embedding_inference_batch_size: int = Field(default=32, ge=1, le=128)
+    embedding_local_files_only: bool = False
+    synthesis_provider: Literal["claude-code", "agent", "anthropic"] = "claude-code"
+    synthesis_model: str = "claude-haiku-4-5-20251001"
     verification_model: str | None = None
     chunk_target_tokens: int = Field(default=450, ge=16, le=8000)
     chunk_max_tokens: int = Field(default=700, ge=16, le=8000)
@@ -58,10 +64,11 @@ class Settings(BaseModel):
             raise ValueError("Require overlap < target <= maximum chunk tokens.")
         if self.embedding_batch_size * self.chunk_max_tokens > 300_000:
             raise ValueError("Embedding batch token budget exceeds 300,000.")
-        if self.embedding_model == "text-embedding-3-small" and self.embedding_dimensions > 1536:
-            raise ValueError("text-embedding-3-small supports at most 1536 dimensions.")
         if not self.embedding_model.strip() or not self.synthesis_model.strip():
             raise ValueError("Model names cannot be empty.")
+        for model in (self.synthesis_model, self.verification_model):
+            if model is not None and not model.startswith("claude-"):
+                raise ValueError("Synthesis and verification models must be Claude models.")
         object.__setattr__(self, "db_path", self.db_path.expanduser().absolute())
         return self
 
@@ -69,7 +76,11 @@ class Settings(BaseModel):
     def embedding_fingerprint(self) -> str:
         return json.dumps(
             {
-                "provider": "openai",
+                "provider": "local-transformers",
+                "revision": self.embedding_revision,
+                "window_tokens": self.embedding_window_tokens,
+                "pooling": "content-weighted-e5-attention-mean-v1",
+                "prefix": "e5-passage-query-v1",
                 "model": self.embedding_model,
                 "dimensions": self.embedding_dimensions,
                 "encoding": "float32-le-l2-v1",

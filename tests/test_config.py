@@ -21,7 +21,7 @@ def test_invalid_chunk_limits_and_dimensions_are_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(chunk_overlap_tokens=450)
     with pytest.raises(ValidationError):
-        Settings(embedding_dimensions=2000)
+        Settings(embedding_dimensions=3073)
 
 
 def test_library_capacity_has_an_explicit_finite_upper_bound() -> None:
@@ -33,9 +33,9 @@ def test_library_capacity_has_an_explicit_finite_upper_bound() -> None:
 
 
 def test_secrets_do_not_appear_in_serialization_or_repr() -> None:
-    settings = Settings(openai_api_key=SecretStr("synthetic-private-value"))
+    settings = Settings(anthropic_api_key=SecretStr("synthetic-private-value"))
     assert "synthetic-private-value" not in repr(settings)
-    assert "openai_api_key" not in settings.model_dump()
+    assert "anthropic_api_key" not in settings.model_dump()
 
 
 def test_environment_provider_defaults_and_invalid_input(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,3 +49,27 @@ def test_environment_provider_defaults_and_invalid_input(monkeypatch: pytest.Mon
         Settings.from_env()
     assert "embedding_dimensions" in str(error.value)
     assert "invalid-secret-like-input" not in str(error.value)
+
+
+def test_local_default_is_pinned_and_openai_configuration_is_rejected() -> None:
+    settings = Settings()
+    assert settings.embedding_dimensions == 384
+    assert settings.synthesis_provider == "claude-code"
+    assert len(settings.embedding_revision) == 40
+    assert settings.embedding_model == "intfloat/multilingual-e5-small"
+    assert (
+        settings.embedding_fingerprint
+        != Settings(embedding_window_tokens=256).embedding_fingerprint
+    )
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"synthesis_provider": "openai"})
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"embedding_model": "text-embedding-3-small"})
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"openai_api_key": "secret"})
+
+
+@pytest.mark.parametrize("field", ["synthesis_model", "verification_model"])
+def test_non_claude_synthesis_model_is_rejected(field: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: "gpt-4.1-mini"})

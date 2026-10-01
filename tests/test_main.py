@@ -44,7 +44,7 @@ def test_local_commands_need_no_provider_key(tmp_path: Path, monkeypatch, capsys
     assert cli.main(args) == 0
     payload = json.loads(capsys.readouterr().out)
     if command == "doctor":
-        assert payload["openai_key_present"] is False
+        assert payload["embedding_provider"] == "local"
         assert payload["anthropic_key_present"] is False
     elif command == "list":
         assert payload == []
@@ -55,15 +55,9 @@ def test_local_commands_need_no_provider_key(tmp_path: Path, monkeypatch, capsys
 
 
 def test_abstention_exit_and_json(tmp_path: Path, monkeypatch, capsys):
-    from mimir_rag.models import Answer
-
-    class EmptyGenerator:
-        def __init__(self, settings, store, provider):
-            pass
-
-        async def ask(self, question, *, top_k=None):
-            return Answer(markdown="Insufficient evidence.", abstained=True, source_ids=[])
-
-    monkeypatch.setattr(cli, "Generator", EmptyGenerator)
+    monkeypatch.setenv("MIMIR_SYNTHESIS_PROVIDER", "agent")
     assert cli.main(["--db", str(tmp_path / "private" / "db"), "ask", "unknown", "--json"]) == 3
-    assert json.loads(capsys.readouterr().out)["abstained"] is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["abstained"] is True
+    assert payload["status"] == "abstained"
+    assert payload["source_ids"] == []

@@ -68,48 +68,36 @@ class EvidenceStore:
         return [self.hit]
 
 
-def envelope(provider: str, value: dict[str, Any]) -> dict[str, Any]:
-    text = json.dumps(value)
-    if provider == "openai":
-        return {
-            "status": "completed",
-            "output": [{"content": [{"type": "output_text", "text": text}]}],
-        }
-    return {"stop_reason": "end_turn", "content": [{"type": "text", "text": text}]}
+class StubEmbeddingClient(ProviderClient):
+    async def embed(self, texts: list[str], *, purpose: str = "document") -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+
+def envelope(value: dict[str, Any]) -> dict[str, Any]:
+    return {"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(value)}]}
 
 
 @pytest.mark.parametrize("role", ["synthesis", "verification"])
-@pytest.mark.parametrize(
-    "provider,container", [("openai", "output"), ("openai", "content"), ("anthropic", "content")]
-)
-async def test_null_provider_containers_produce_safe_abstention(
-    tmp_path: Path, role: str, provider: str, container: str
-) -> None:
+async def test_null_provider_containers_produce_safe_abstention(tmp_path: Path, role: str) -> None:
     calls = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
         nonlocal calls
-        if request.url.path.endswith("/embeddings"):
-            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
         calls += 1
         phase = "synthesis" if calls == 1 else "verification"
-        value = envelope(provider, draft() if calls == 1 else verdict())
+        value = envelope(draft() if calls == 1 else verdict())
         if phase == role:
-            if provider == "openai" and container == "content":
-                value["output"] = [{"content": None}]
-            else:
-                value[container] = None
+            value["content"] = None
         return httpx.Response(200, json=value)
 
     settings = Settings(
         db_path=tmp_path / "library.sqlite3",
         embedding_dimensions=2,
-        synthesis_provider=provider,
-        openai_api_key="synthetic-key",
+        synthesis_provider="anthropic",
         anthropic_api_key="synthetic-key",
         api_max_retries=0,
     )
-    async with ProviderClient(settings, transport=httpx.MockTransport(respond)) as client:
+    async with StubEmbeddingClient(settings, transport=httpx.MockTransport(respond)) as client:
         answer = await Generator(settings, cast(VectorStore, EvidenceStore(tmp_path)), client).ask(
             "How do observations affect actions?"
         )
@@ -123,14 +111,14 @@ class LargeResponse(httpx.AsyncByteStream):
         self.bytes_read = 0
 
     async def __aiter__(self):
-        prefix = b'{"status":"completed","padding":"'
+        prefix = b'{"stop_reason":"end_turn","padding":"'
         self.bytes_read += len(prefix)
         yield prefix
         for _ in range(17):
             piece = b"x" * (1024 * 1024)
             self.bytes_read += len(piece)
             yield piece
-        suffix = ',"output":' + json.dumps(envelope("openai", draft())["output"]) + "}"
+        suffix = ',"content":' + json.dumps(envelope(draft())["content"]) + "}"
         piece = ('"' + suffix).encode()
         self.bytes_read += len(piece)
         yield piece
@@ -140,17 +128,16 @@ async def test_oversized_provider_body_abstains_before_unbounded_buffering(tmp_p
     body = LargeResponse()
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/embeddings"):
-            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
         return httpx.Response(200, headers={"Content-Type": "application/json"}, stream=body)
 
     settings = Settings(
         db_path=tmp_path / "library.sqlite3",
         embedding_dimensions=2,
-        openai_api_key="synthetic-key",
+        synthesis_provider="anthropic",
+        anthropic_api_key="synthetic-key",
         api_max_retries=0,
     )
-    async with ProviderClient(settings, transport=httpx.MockTransport(respond)) as client:
+    async with StubEmbeddingClient(settings, transport=httpx.MockTransport(respond)) as client:
         answer = await Generator(settings, cast(VectorStore, EvidenceStore(tmp_path)), client).ask(
             "How do observations affect actions?"
         )
@@ -163,7 +150,7 @@ class ControlledSynthesis:
         self.proposal, self.review = proposal, review
         self.calls = 0
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, purpose: str = "document") -> list[list[float]]:
         return [[1.0, 0.0]]
 
     async def complete_json(

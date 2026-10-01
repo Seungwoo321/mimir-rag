@@ -341,32 +341,41 @@ class Generator:
                 )
         return "\n".join(lines), source_ids
 
-    async def ask(self, question: str, top_k: int | None = None) -> Answer:
+    async def retrieve(
+        self, question: str, top_k: int | None = None
+    ) -> tuple[str, list[SearchHit], str | None]:
         question = question.strip()
         if not question or len(self._tokens(question)) > self.settings.max_question_tokens:
             raise GroundingError("Question must be nonempty and within MIMIR_MAX_QUESTION_TOKENS.")
         if top_k is not None and not 1 <= top_k <= 50:
             raise GroundingError("top-k must be between 1 and 50.")
         if not await self.store.has_chunks():
-            return self._abstain("insufficient_evidence")
+            return question, [], "insufficient_evidence"
         try:
-            vectors = await self.provider.embed([question])
+            vectors = await self.provider.embed([question], purpose="query")
         except ProviderError:
-            return self._abstain("embedding_provider_failure")
+            return question, [], "embedding_provider_failure"
         if len(vectors) != 1:
-            return self._abstain("invalid_query_embedding")
+            return question, [], "invalid_query_embedding"
         hits = await self.store.search(question, vectors[0], top_k=top_k)
         schema = self._synthesis_schema()
         try:
             selected = self._select_evidence(question, hits, schema)
         except GroundingError:
-            return self._abstain("inconsistent_retrieval")
+            return question, [], "inconsistent_retrieval"
         if not selected:
             weak = not any(
                 math.isfinite(hit.dense_score) and hit.dense_score >= self.settings.min_dense_score
                 for hit in hits
             )
-            return self._abstain("insufficient_evidence" if weak else "context_budget_exceeded")
+            return question, [], "insufficient_evidence" if weak else "context_budget_exceeded"
+        return question, selected, None
+
+    async def ask(self, question: str, top_k: int | None = None) -> Answer:
+        question, selected, reason = await self.retrieve(question, top_k)
+        if reason is not None:
+            return self._abstain(reason)
+        schema = self._synthesis_schema()
         payload = self._payload(question, selected)
         try:
             raw = await self.provider.complete_json(

@@ -287,6 +287,47 @@ class VectorStore:
 
         return await self._run(read)
 
+    async def get_hits_by_ids(self, identifiers: list[str]) -> list[SearchHit]:
+        if len(identifiers) > 50 or len(set(identifiers)) != len(identifiers):
+            raise StoreError("Evidence reload requires at most 50 distinct source IDs.")
+        if any(not identifier or len(identifier) > 128 for identifier in identifiers):
+            raise StoreError("Evidence source identifiers are invalid.")
+        await self.initialize()
+        if not identifiers:
+            return []
+
+        def read() -> list[SearchHit]:
+            with closing(self._connect("ro")) as conn:
+                conn.execute("BEGIN")
+                try:
+                    self._validate(conn)
+                    placeholders = ",".join("?" for _ in identifiers)
+                    rows = conn.execute(
+                        "SELECT c.*, d.source_uri FROM chunks c "
+                        "JOIN documents d ON d.id=c.document_id "
+                        f"WHERE c.id IN ({placeholders})",
+                        identifiers,
+                    ).fetchall()
+                    by_id = {row["id"]: row for row in rows}
+                    result = [
+                        SearchHit(
+                            chunk=self._chunk(by_id[identifier]),
+                            source_uri=by_id[identifier]["source_uri"],
+                            dense_score=0.0,
+                            score=0.0,
+                            lexical_rank=None,
+                        )
+                        for identifier in identifiers
+                        if identifier in by_id
+                    ]
+                    conn.execute("COMMIT")
+                    return result
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+
+        return await self._run(read)
+
     async def has_chunks(self) -> bool:
         await self.initialize()
 

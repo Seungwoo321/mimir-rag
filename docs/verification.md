@@ -20,15 +20,19 @@ claude plugin validate skills --strict
 
 Tests use synthetic documents and deterministic embedding/synthesis doubles. Provider HTTP tests use mock transports and validate actual request payloads, timeout retries, refusal handling, and output decoding. They never read a user's books, discover secrets, or call a paid endpoint. A passing offline suite establishes application contracts, not current provider availability or model grounding accuracy on arbitrary books.
 
-For intentional live verification, install the CLI, set `OPENAI_API_KEY` in the process environment, ingest a synthetic licensed text, and ask a question whose answer can be manually checked. Anthropic synthesis additionally needs `ANTHROPIC_API_KEY` and `MIMIR_SYNTHESIS_PROVIDER=anthropic`. Never save keys in a transcript. Evaluate supported and unsupported questions, adversarial document instructions, and citation accuracy independently before relying on generated answers for consequential decisions.
+For genuine local-weight verification, ingest a synthetic licensed text with no API credentials, inspect retrieved passages, and use authenticated Claude Code for independently reviewed answers. For explicit agent mode, complete proposal/review/verify using non-OpenAI contexts. Check multilingual retrieval and long inputs beyond one encoder window. Optional Anthropic synthesis needs `ANTHROPIC_API_KEY` and `MIMIR_SYNTHESIS_PROVIDER=anthropic`. Never save keys in a transcript. Evaluate supported and unsupported questions, adversarial document instructions, and citation accuracy independently before relying on generated answers for consequential decisions.
 
 ## Three principal failure modes
 
 | Failure | Observable behavior | Code-level mitigation | Verification |
 | --- | --- | --- | --- |
 | Out-of-context question or unsupported claim | Search finds weak evidence, synthesis declares unanswerable, or reviewer cannot prove every claim | `generator.py` applies a cosine floor and context budget, validates IDs and exact excerpts, requires complete positive reviewer coverage, and emits an explicit abstention | Unrelated question, empty corpus, invented source ID, unsupported relation, missing review decision, prompt injection, and provider refusal |
-| Embedding API timeout or rate limit | Provider raises a bounded failure while collecting a new document generation | `providers.py` retries only transient errors with bounded exponential backoff and bounded `Retry-After`; `ingestor.py` completes all embeddings before `vector_store.py` atomically replaces rows | Timeout/429/503 mocked responses, exhausted retries, mid-batch failure, and cancellation all preserve the prior searchable generation |
-| Semantic drift from a model or dimension change | A library is queried or written using incompatible vectors | `config.py` defines the embedding-space fingerprint; `vector_store.py` checks it before writes/searches and rejects mismatches and invalid vectors | Same dimensions with different model, different dimensions, NaN/Infinity, zero vector, and corrupted stored vector |
+| Local model/cache or inference failure | Weights are unavailable, device setup fails, or a new generation cannot be fully embedded | `providers.py` uses pinned safe weights and bounded complete windows; `ingestor.py` finishes valid embeddings before `vector_store.py` atomically replaces rows | Missing offline cache, incompatible output, long-tail coverage, mid-batch failure and cancellation preserve the prior searchable generation |
+| Semantic drift from a model or dimension change | A library is queried or written using incompatible vectors | `config.py` defines the embedding-space fingerprint; `vector_store.py` checks it before writes/searches and rejects mismatches and invalid vectors | Changed revision/window/pooling contract, incompatible dimensions, NaN/Infinity, zero vector, and corrupted stored vector |
+
+## Agent session verification
+
+Check wrong evidence hashes, changed proposal hashes, forged source IDs, invalid exact quotations, rejected/missing/duplicate review verdicts, malformed envelopes, stale sessions after replacement/deletion, and private session paths. A separate reviewer inspects source entailment; deterministic hashes do not prove semantic truth or reviewer independence. A valid proposal never becomes an answer before `verify` succeeds. No test or runtime path invokes an OpenAI model.
 
 ## Additional boundaries
 

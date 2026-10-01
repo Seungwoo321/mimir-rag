@@ -87,7 +87,7 @@ class FakeProvider:
         self.calls: list[dict[str, Any]] = []
         self.embedded: list[str] = []
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, purpose: str = "document") -> list[list[float]]:
         self.embedded.extend(texts)
         if self.failure == "embedding":
             raise ProviderError("Sensitive provider details must not reach the answer.")

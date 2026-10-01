@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 — 2026-10-02
+
+- Replace cloud embeddings with pinned local multilingual E5 inference and complete bounded-window aggregation.
+- Default to isolated authenticated Claude Code synthesis and grounding review with deterministic citation verification.
+- Remove OpenAI inference and API-key requirements; retain explicit non-OpenAI agent workflow and Anthropic API synthesis.
+- Bind embedding fingerprints to the complete local inference contract and reject incompatible libraries.
+
 ## 0.1.2 — 2026-10-02
 
 - Support explicitly configured libraries up to 150,000 chunks while retaining the 50,000-chunk default.

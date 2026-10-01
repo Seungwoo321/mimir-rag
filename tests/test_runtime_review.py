@@ -25,7 +25,7 @@ SCHEMA = {
 
 def configuration(**changes: Any) -> Settings:
     return Settings(
-        openai_api_key=SecretStr("synthetic-openai-key"),
+        synthesis_provider="anthropic",
         anthropic_api_key=SecretStr("synthetic-anthropic-key"),
         embedding_dimensions=2,
         api_max_retries=1,
@@ -34,47 +34,14 @@ def configuration(**changes: Any) -> Settings:
     )
 
 
-def accepted_response(provider: str) -> dict[str, Any]:
-    content = [
-        {"type": "output_text" if provider == "openai" else "text", "text": '{"accepted":true}'}
-    ]
-    if provider == "openai":
-        return {"status": "completed", "output": [{"type": "message", "content": content}]}
-    return {"stop_reason": "end_turn", "content": content}
+def accepted_response() -> dict[str, Any]:
+    return {"stop_reason": "end_turn", "content": [{"type": "text", "text": '{"accepted":true}'}]}
 
 
-@pytest.mark.parametrize("provider", ["openai", "anthropic"])
 @pytest.mark.parametrize("container", [None, 17, "message", {"text": "data"}])
-async def test_synthesis_container_failures_are_normalized(provider: str, container: Any) -> None:
-    value = accepted_response(provider)
-    if provider == "openai":
-        value["output"] = container
-    else:
-        value["content"] = container
-    async with ProviderClient(
-        configuration(synthesis_provider=provider),
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=value)),
-    ) as client:
-        with pytest.raises(ProviderError):
-            await client.complete_json("fixed system", "untrusted data", SCHEMA)
-
-
-@pytest.mark.parametrize("container", [None, 5, "contents", {"type": "output_text"}])
-async def test_openai_nested_content_container_failures_are_normalized(container: Any) -> None:
-    value = accepted_response("openai")
-    value["output"][0]["content"] = container
-    async with ProviderClient(
-        configuration(),
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=value)),
-    ) as client:
-        with pytest.raises(ProviderError):
-            await client.complete_json("fixed system", "untrusted data", SCHEMA)
-
-
-@pytest.mark.parametrize("message_type", [[], {}, 7, True])
-async def test_openai_malformed_message_type_fails_closed(message_type: Any) -> None:
-    value = accepted_response("openai")
-    value["output"][0]["type"] = message_type
+async def test_synthesis_container_failures_are_normalized(container: Any) -> None:
+    value = accepted_response()
+    value["content"] = container
     async with ProviderClient(
         configuration(),
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=value)),
@@ -97,7 +64,7 @@ async def test_all_request_transport_failures_are_bounded_and_secret_safe(error_
 
     async with ProviderClient(configuration(), transport=httpx.MockTransport(fail)) as client:
         with pytest.raises(ProviderError) as error:
-            await client.embed(["synthetic source"])
+            await client.complete_json("fixed system", "source", SCHEMA)
     assert calls == 2
     assert "synthetic-secret-and-document-text" not in str(error.value)
     assert error.value.__suppress_context__
@@ -111,31 +78,27 @@ async def test_remote_protocol_failure_can_recover_within_retry_budget() -> None
         calls += 1
         if calls == 1:
             raise httpx.RemoteProtocolError("broken HTTP framing", request=request)
-        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 0]}]})
+        return httpx.Response(200, json=accepted_response())
 
     async with ProviderClient(configuration(), transport=httpx.MockTransport(flaky)) as client:
-        assert await client.embed(["synthetic source"]) == [[1.0, 0.0]]
+        assert await client.complete_json("fixed system", "source", SCHEMA) == {"accepted": True}
     assert calls == 2
 
 
-@pytest.mark.parametrize("provider", ["openai", "anthropic"])
 @pytest.mark.parametrize(
     "suffix", ["\nsecret", "\rsecret", "\x00secret", "\u00e9secret", " secret"]
 )
-async def test_invalid_credentials_fail_before_http_without_secret_disclosure(
-    provider: str, suffix: str
-) -> None:
+async def test_invalid_credentials_fail_before_http_without_secret_disclosure(suffix: str) -> None:
     called = False
     secret = "synthetic-private-key" + suffix
 
     def handle(request: httpx.Request) -> httpx.Response:
         nonlocal called
         called = True
-        return httpx.Response(200, json=accepted_response(provider))
+        return httpx.Response(200, json=accepted_response())
 
     values = {
-        "synthesis_provider": provider,
-        "openai_api_key": SecretStr(secret),
+        "synthesis_provider": "anthropic",
         "anthropic_api_key": SecretStr(secret),
         "embedding_dimensions": 2,
     }
@@ -171,7 +134,7 @@ async def test_oversized_success_body_is_rejected_and_stream_closed() -> None:
 
     async with ProviderClient(configuration(), transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(ProviderError, match="byte limit"):
-            await client.embed(["synthetic source"])
+            await client.complete_json("fixed system", "source", SCHEMA)
     assert calls == 1
     assert stream.closed
 
@@ -183,32 +146,14 @@ async def test_entire_attempt_deadline_covers_slow_response_delivery() -> None:
         nonlocal calls
         calls += 1
         await asyncio.sleep(0.03)
-        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 0]}]})
+        return httpx.Response(200, json=accepted_response())
 
     async with ProviderClient(
         configuration(api_timeout_seconds=0.001), transport=httpx.MockTransport(delayed)
     ) as client:
         with pytest.raises(ProviderError):
-            await client.embed(["synthetic source"])
+            await client.complete_json("fixed system", "source", SCHEMA)
     assert calls == 2
-
-
-async def test_embedding_budget_violation_makes_no_provider_calls() -> None:
-    calls = 0
-
-    def handle(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(500)
-
-    async with ProviderClient(
-        configuration(embedding_batch_size=64), transport=httpx.MockTransport(handle)
-    ) as client:
-        with pytest.raises(ProviderError, match="8191"):
-            await client.embed([" word" * 8192])
-        with pytest.raises(ProviderError, match="aggregate"):
-            await client.embed([" word" * 5000] * 64)
-    assert calls == 0
 
 
 async def test_schema_adaptation_preserves_property_and_definition_names() -> None:
@@ -225,11 +170,11 @@ async def test_schema_adaptation_preserves_property_and_definition_names() -> No
 
     def handle(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        wired = body["text"]["format"]["schema"]
+        wired = body["output_config"]["format"]["schema"]
         assert set(wired["properties"]) == {"title", "pattern"}
         assert "title" in wired["$defs"]
         assert "minLength" not in wired["properties"]["pattern"]
-        return httpx.Response(200, json=accepted_response("openai"))
+        return httpx.Response(200, json=accepted_response())
 
     async with ProviderClient(configuration(), transport=httpx.MockTransport(handle)) as client:
         await client.complete_json("fixed system", "source", schema)

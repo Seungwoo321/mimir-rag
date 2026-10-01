@@ -1,12 +1,18 @@
 {
   "name": "mimir-rag-marketplace",
   "description": "Mimir-RAG personal knowledge retrieval for coding agents.",
-  "owner": {"name": "Seungwoo321"},
-  "plugins": [{
-    "name": "mimir-rag",
-    "source": "./",
-    "description": "Personal knowledge retrieval with verified citations.",
-    "version": "0.1.2",
-    "author": {"name": "Seungwoo321"}
-  }]
+  "owner": {
+    "name": "Seungwoo321"
+  },
+  "plugins": [
+    {
+      "name": "mimir-rag",
+      "source": "./",
+      "description": "Personal knowledge retrieval with verified citations.",
+      "version": "0.2.0",
+      "author": {
+        "name": "Seungwoo321"
+      }
+    }
+  ]
 }

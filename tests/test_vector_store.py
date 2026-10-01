@@ -378,3 +378,30 @@ async def test_bounded_lock_failure_is_actionable_and_preserves_data(tmp_path: P
             await store.upsert_document(new, replacement, [[1, 0, 0]])
         blocker.execute("ROLLBACK")
     assert await store.get_document(old.id) == old
+
+
+async def test_live_evidence_reload_tracks_replacement_and_deletion(tmp_path: Path) -> None:
+    store = VectorStore(settings_for(tmp_path))
+    document, chunks = source("reload", ["first evidence", "second evidence"])
+    await store.upsert_document(document, chunks, [[1, 0, 0], [0, 1, 0]])
+    hits = await store.get_hits_by_ids([chunks[1].id, chunks[0].id])
+    assert [hit.chunk for hit in hits] == [chunks[1], chunks[0]]
+    assert all(hit.source_uri == document.source_uri for hit in hits)
+    assert await store.get_hits_by_ids(["missing"]) == []
+    replacement, newer = source("reload", ["changed evidence"], "new")
+    await store.upsert_document(replacement, newer, [[1, 0, 0]])
+    assert await store.get_hits_by_ids([chunks[0].id]) == []
+    assert (await store.get_hits_by_ids([newer[0].id]))[0].chunk == newer[0]
+    await store.delete_document(document.id)
+    assert await store.get_hits_by_ids([newer[0].id]) == []
+
+
+@pytest.mark.parametrize(
+    "ids", [["repeated", "repeated"], [""], ["x" * 129], [str(i) for i in range(51)]]
+)
+async def test_live_evidence_reload_rejects_unbounded_or_ambiguous_ids(
+    tmp_path: Path, ids: list[str]
+) -> None:
+    store = VectorStore(settings_for(tmp_path))
+    with pytest.raises(StoreError):
+        await store.get_hits_by_ids(ids)

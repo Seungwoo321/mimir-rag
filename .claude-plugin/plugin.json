@@ -1,10 +1,17 @@
 {
   "name": "mimir-rag",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Personal-library hybrid search, semantic ingestion and verified source citations.",
-  "author": {"name": "Seungwoo321"},
+  "author": {
+    "name": "Seungwoo321"
+  },
   "homepage": "https://github.com/Seungwoo321/mimir-rag",
   "repository": "https://github.com/Seungwoo321/mimir-rag",
   "license": "MIT",
-  "keywords": ["rag", "knowledge", "citations", "local-search"]
+  "keywords": [
+    "rag",
+    "knowledge",
+    "citations",
+    "local-search"
+  ]
 }

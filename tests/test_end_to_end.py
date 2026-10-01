@@ -12,6 +12,7 @@ import pytest
 
 from mimir_rag import main as cli
 from mimir_rag.config import Settings
+from mimir_rag.errors import ProviderError
 from mimir_rag.providers import ProviderClient
 
 
@@ -19,50 +20,27 @@ class OfflineWire:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.embedding_failure = False
+        self.local_calls: list[dict[str, Any]] = []
         self.forge_source = False
 
     @property
     def embedding_calls(self) -> list[dict[str, Any]]:
-        return [body for path, body in self.calls if path == "/v1/embeddings"]
+        return self.local_calls
 
     @property
     def completion_calls(self) -> list[dict[str, Any]]:
-        return [body for path, body in self.calls if path in {"/v1/responses", "/v1/messages"}]
+        return [body for path, body in self.calls if path in {"/v1/messages"}]
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         assert request.url.scheme == "https"
-        assert request.url.host in {"api.openai.com", "api.anthropic.com"}
+        assert request.url.host == "api.anthropic.com"
         body = json.loads(request.content)
         self.calls.append((request.url.path, body))
-        if request.url.path == "/v1/embeddings":
-            assert request.url.host == "api.openai.com"
-            assert body["model"] == "text-embedding-3-small"
-            assert body["dimensions"] == 3
-            assert body["encoding_format"] == "float"
-            if self.embedding_failure:
-                return httpx.Response(503, json={"error": {"message": "offline failure"}})
-            data = []
-            for index, text in enumerate(body["input"]):
-                if "jupiter" in text.casefold():
-                    vector = [0.0, 1.0, 0.0]
-                elif "feedback" in text.casefold():
-                    vector = [1.0, 0.0, 0.0]
-                else:
-                    vector = [0.0, 0.0, 1.0]
-                data.append({"index": index, "embedding": vector})
-            return httpx.Response(200, json={"data": list(reversed(data))})
-        if request.url.path == "/v1/responses":
-            assert request.url.host == "api.openai.com"
-            assert body["store"] is False
-            assert body["text"]["format"]["type"] == "json_schema"
-            envelope = json.loads(body["input"])
-        else:
-            assert request.url.path == "/v1/messages"
-            assert request.url.host == "api.anthropic.com"
-            assert body["output_config"]["format"]["type"] == "json_schema"
-            envelope = json.loads(body["messages"][0]["content"])
-        if body["model"] == "offline-review":
+        assert request.url.path == "/v1/messages"
+        assert body["output_config"]["format"]["type"] == "json_schema"
+        envelope = json.loads(body["messages"][0]["content"])
+        if body["model"] == "claude-offline-review":
             assert "proposal" in envelope
             by_id = {record["source_id"]: record for record in envelope["evidence"]}
             proposal = envelope["proposal"]
@@ -81,7 +59,7 @@ class OfflineWire:
                 ],
             }
         else:
-            assert body["model"] == "offline-synthesis"
+            assert body["model"] == "claude-offline-synthesis"
             assert "proposal" not in envelope
             evidence = next(
                 record for record in envelope["evidence"] if "feedback loop" in record["concepts"]
@@ -117,19 +95,7 @@ class OfflineWire:
                     }
                 ],
             }
-        if request.url.path == "/v1/responses":
-            return httpx.Response(
-                200,
-                json={
-                    "status": "completed",
-                    "output": [
-                        {
-                            "type": "message",
-                            "content": [{"type": "output_text", "text": json.dumps(result)}],
-                        }
-                    ],
-                },
-            )
+
         return httpx.Response(
             200,
             json={
@@ -143,18 +109,32 @@ def configure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthesis: str) -
     for key in list(os.environ):
         if key.startswith("MIMIR_"):
             monkeypatch.delenv(key)
-    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-offline-key")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-offline-key")
     monkeypatch.setenv("MIMIR_DB_PATH", str(tmp_path / "private" / "library.sqlite3"))
     monkeypatch.setenv("MIMIR_EMBEDDING_DIMENSIONS", "3")
     monkeypatch.setenv("MIMIR_SYNTHESIS_PROVIDER", synthesis)
-    monkeypatch.setenv("MIMIR_SYNTHESIS_MODEL", "offline-synthesis")
-    monkeypatch.setenv("MIMIR_VERIFICATION_MODEL", "offline-review")
+    monkeypatch.setenv("MIMIR_SYNTHESIS_MODEL", "claude-offline-synthesis")
+    monkeypatch.setenv("MIMIR_VERIFICATION_MODEL", "claude-offline-review")
     monkeypatch.setenv("MIMIR_API_MAX_RETRIES", "0")
     wire = OfflineWire()
 
+    class LocalProvider(ProviderClient):
+        async def embed(self, texts, *, purpose="document"):
+            wire.local_calls.append({"input": list(texts), "purpose": purpose})
+            if wire.embedding_failure:
+                raise ProviderError("Local embedding inference failed.")
+            vectors = []
+            for text in texts:
+                if "jupiter" in text.casefold():
+                    vectors.append([0.0, 1.0, 0.0])
+                elif "feedback" in text.casefold():
+                    vectors.append([1.0, 0.0, 0.0])
+                else:
+                    vectors.append([0.0, 0.0, 1.0])
+            return vectors
+
     def provider(settings: Settings) -> ProviderClient:
-        return ProviderClient(settings, transport=httpx.MockTransport(wire))
+        return LocalProvider(settings, transport=httpx.MockTransport(wire))
 
     monkeypatch.setattr(cli, "ProviderClient", provider)
     return wire
@@ -178,7 +158,7 @@ def invoke(capsys: pytest.CaptureFixture[str], arguments: list[str], code: int =
     return json.loads(output.out)
 
 
-@pytest.mark.parametrize("synthesis", ["openai", "anthropic"])
+@pytest.mark.parametrize("synthesis", ["anthropic"])
 def test_real_cli_library_lifecycle_with_precise_citations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -207,15 +187,11 @@ def test_real_cli_library_lifecycle_with_precise_citations(
     assert "feedback loop ↔ control theory (co-occurrence)" in answer["markdown"]
     assert answer["markdown"].index(")") < answer["markdown"].index("The handbook uses")
     assert [body["model"] for body in wire.completion_calls] == [
-        "offline-synthesis",
-        "offline-review",
+        "claude-offline-synthesis",
+        "claude-offline-review",
     ]
     synthesis_body = wire.completion_calls[0]
-    envelope = json.loads(
-        synthesis_body["input"]
-        if synthesis == "openai"
-        else synthesis_body["messages"][0]["content"]
-    )
+    envelope = json.loads(synthesis_body["messages"][0]["content"])
     evidence = {record["source_id"]: record for record in envelope["evidence"]}
     assert set(answer["source_ids"]) <= set(evidence)
     for record in evidence.values():
@@ -266,12 +242,12 @@ def test_real_cli_library_lifecycle_with_precise_citations(
     assert len(wire.completion_calls) == completed
 
 
-def test_http_embedding_failure_preserves_last_cli_document_generation(
+def test_local_embedding_failure_preserves_last_cli_document_generation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    wire = configure(tmp_path, monkeypatch, "openai")
+    wire = configure(tmp_path, monkeypatch, "anthropic")
     path = tmp_path / "synthetic.md"
     path.write_text(manuscript(), encoding="utf-8")
     invoke(capsys, ["ingest", str(path)])
@@ -281,7 +257,7 @@ def test_http_embedding_failure_preserves_last_cli_document_generation(
     assert cli.main(["ingest", str(path)]) == 2
     output = capsys.readouterr()
     assert output.out == ""
-    assert "HTTP 503" in output.err
+    assert "Local embedding inference failed" in output.err
     assert "recorded results" not in output.err
     assert invoke(capsys, ["list"]) == previous
     wire.embedding_failure = False
@@ -295,7 +271,7 @@ def test_http_forged_source_cannot_reach_cli_answer_or_review(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    wire = configure(tmp_path, monkeypatch, "openai")
+    wire = configure(tmp_path, monkeypatch, "anthropic")
     path = tmp_path / "synthetic.md"
     path.write_text(manuscript(), encoding="utf-8")
     invoke(capsys, ["ingest", str(path)])
@@ -305,4 +281,4 @@ def test_http_forged_source_cannot_reach_cli_answer_or_review(
     assert answer["reason"] == "grounding_validation_failed"
     assert answer["source_ids"] == []
     assert "forged-source" not in answer["markdown"]
-    assert [body["model"] for body in wire.completion_calls] == ["offline-synthesis"]
+    assert [body["model"] for body in wire.completion_calls] == ["claude-offline-synthesis"]

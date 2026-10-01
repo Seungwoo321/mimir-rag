@@ -1,8 +1,10 @@
 {
   "name": "mimir-rag",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Personal-library hybrid search and source-verified answers.",
-  "author": {"name": "Seungwoo321"},
+  "author": {
+    "name": "Seungwoo321"
+  },
   "homepage": "https://github.com/Seungwoo321/mimir-rag",
   "repository": "https://github.com/Seungwoo321/mimir-rag",
   "license": "MIT",
@@ -10,9 +12,12 @@
   "interface": {
     "displayName": "Mimir-RAG",
     "shortDescription": "Ask your books with verified citations",
-    "longDescription": "Ingest authorized PDF, text and Markdown sources into a private local library; query hybrid search with evidence-checked citations and concept mapping. Cloud inference uses separately configured API credentials.",
+    "longDescription": "Ingest authorized PDF, text and Markdown sources using local multilingual embeddings; generate source-verified answers through authenticated Claude Code with separate grounding review. No OpenAI model calls or cloud embedding credentials.",
     "developerName": "Seungwoo321",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"]
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
   }
 }

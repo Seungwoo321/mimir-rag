@@ -12,31 +12,15 @@ from mimir_rag.providers import ProviderClient
 
 def settings(**values: Any) -> Settings:
     return Settings(
-        openai_api_key=SecretStr("test-key"),
-        embedding_dimensions=2,
+        anthropic_api_key=SecretStr("test-key"),
+        synthesis_provider="anthropic",
         api_backoff_seconds=0,
         **values,
     )
 
 
-async def test_embeddings_preserve_input_order_and_normalize() -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        assert body["input"] == ["alpha", "beta"]
-        assert body["dimensions"] == 2
-        assert body["model"] == "text-embedding-3-small"
-        return httpx.Response(
-            200,
-            json={
-                "data": [
-                    {"index": 1, "embedding": [0, 9]},
-                    {"index": 0, "embedding": [3, 4]},
-                ]
-            },
-        )
-
-    async with ProviderClient(settings(), transport=httpx.MockTransport(handle)) as client:
-        assert await client.embed(["alpha", "beta"]) == [[0.6, 0.8], [0.0, 1.0]]
+def successful() -> dict[str, Any]:
+    return {"stop_reason": "end_turn", "content": [{"type": "text", "text": '{"ok":true}'}]}
 
 
 @pytest.mark.parametrize("mode", ["timeout", "rate-limit", "server-error"])
@@ -50,141 +34,74 @@ async def test_bounded_transient_retry(mode: str) -> None:
             if mode == "timeout":
                 raise httpx.ReadTimeout("synthetic timeout", request=request)
             return httpx.Response(429 if mode == "rate-limit" else 503)
-        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 0]}]})
+        return httpx.Response(200, json=successful())
 
     async with ProviderClient(
         settings(api_max_retries=2), transport=httpx.MockTransport(handle)
     ) as client:
-        assert await client.embed(["alpha"]) == [[1.0, 0.0]]
+        assert await client.complete_json("system", "user", {}) == {"ok": True}
     assert attempts == 3
 
 
-async def test_exhaustion_and_nonretryable_auth_do_not_leak_response() -> None:
+@pytest.mark.parametrize("status,expected", [(401, 1), (503, 2)])
+async def test_exhaustion_and_auth_do_not_leak_response(status: int, expected: int) -> None:
     calls = 0
 
     def handle(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        return httpx.Response(401, json={"error": "source-content-and-secret"})
-
-    async with ProviderClient(settings(), transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(ProviderError) as error:
-            await client.embed(["alpha"])
-    assert calls == 1
-    assert "source-content-and-secret" not in str(error.value)
-    calls = 0
-
-    def unavailable(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(503)
+        return httpx.Response(status, json={"error": "source-content-and-secret"})
 
     async with ProviderClient(
-        settings(api_max_retries=1), transport=httpx.MockTransport(unavailable)
+        settings(api_max_retries=1), transport=httpx.MockTransport(handle)
     ) as client:
-        with pytest.raises(ProviderError):
-            await client.embed(["alpha"])
-    assert calls == 2
+        with pytest.raises(ProviderError) as error:
+            await client.complete_json("system", "user", {})
+    assert calls == expected
+    assert "source-content-and-secret" not in str(error.value)
 
 
 @pytest.mark.parametrize(
-    "data",
-    [
-        [{"index": 0, "embedding": [0, 0]}],
-        [{"index": 0, "embedding": [1]}],
-        [{"index": 2, "embedding": [1, 0]}],
-        [{"index": 0, "embedding": [True, 0]}],
-    ],
+    "configuration",
+    [Settings(synthesis_provider="agent"), Settings(synthesis_provider="anthropic")],
 )
-async def test_malformed_vectors_are_rejected(data: list[dict[str, Any]]) -> None:
-    async with ProviderClient(
-        settings(),
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": data})),
-    ) as client:
-        with pytest.raises(ProviderError):
-            await client.embed(["alpha"])
-
-
-async def test_missing_key_fails_before_http_request() -> None:
-    called = False
-
+async def test_host_agent_or_missing_key_fails_before_http(configuration: Settings) -> None:
     def handle(request: httpx.Request) -> httpx.Response:
-        nonlocal called
-        called = True
-        return httpx.Response(500)
+        raise AssertionError("Unexpected cloud call")
 
-    async with ProviderClient(Settings(), transport=httpx.MockTransport(handle)) as client:
+    async with ProviderClient(configuration, transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(ConfigurationError):
-            await client.embed(["alpha"])
-    assert not called
+            await client.complete_json("system", "user", {})
 
 
-async def test_openai_structured_output_has_storage_disabled_and_review_model() -> None:
+async def test_anthropic_structured_review_uses_fixed_system_and_model() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        assert request.url.path == "/v1/responses"
-        assert body["store"] is False
-        assert body["model"] == "review-model"
-        assert body["instructions"] == "fixed-system"
-        assert body["text"]["format"]["strict"] is True
-        return httpx.Response(
-            200,
-            json={
-                "status": "completed",
-                "output": [
-                    {
-                        "content": [
-                            {"type": "output_text", "text": '{"approved":true}'},
-                        ]
-                    }
-                ],
-            },
-        )
-
-    async with ProviderClient(
-        settings(verification_model="review-model"), transport=httpx.MockTransport(handle)
-    ) as client:
-        assert await client.complete_json(
-            "fixed-system", "data", {"type": "object"}, role="verification"
-        ) == {"approved": True}
-
-
-async def test_anthropic_uses_messages_structured_format() -> None:
-    def handle(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
+        assert request.url.host == "api.anthropic.com"
+        assert request.url.path == "/v1/messages"
         assert request.headers["anthropic-version"] == "2023-06-01"
         assert body["output_config"]["format"]["type"] == "json_schema"
         assert body["system"] == "fixed-system"
-        return httpx.Response(
-            200,
-            json={
-                "stop_reason": "end_turn",
-                "content": [
-                    {"type": "text", "text": '{"answerable":false}'},
-                ],
-            },
-        )
+        assert body["model"] == "claude-review-model"
+        return httpx.Response(200, json=successful())
 
-    configuration = settings(
-        synthesis_provider="anthropic",
-        synthesis_model="claude-haiku-4-5-20251001",
-        anthropic_api_key=SecretStr("test-key"),
-    )
-    async with ProviderClient(configuration, transport=httpx.MockTransport(handle)) as client:
-        assert await client.complete_json("fixed-system", "data", {"type": "object"}) == {
-            "answerable": False
-        }
+    async with ProviderClient(
+        settings(verification_model="claude-review-model"), transport=httpx.MockTransport(handle)
+    ) as client:
+        assert await client.complete_json(
+            "fixed-system", "data", {"type": "object"}, role="verification"
+        ) == {"ok": True}
 
 
 @pytest.mark.parametrize(
     "response",
     [
-        {"status": "incomplete", "output": []},
-        {"status": "completed", "output": [{"content": [{"type": "refusal"}]}]},
-        {
-            "status": "completed",
-            "output": [{"content": [{"type": "output_text", "text": "invalid"}]}],
-        },
+        {"stop_reason": "max_tokens", "content": []},
+        {"stop_reason": "refusal", "content": []},
+        {"stop_reason": "end_turn", "content": {}},
+        {"stop_reason": "end_turn", "content": [True]},
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "invalid"}]},
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "[]"}]},
     ],
 )
 async def test_refused_incomplete_or_malformed_synthesis_fails(response: dict[str, Any]) -> None:
@@ -193,4 +110,15 @@ async def test_refused_incomplete_or_malformed_synthesis_fails(response: dict[st
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response)),
     ) as client:
         with pytest.raises(ProviderError):
-            await client.complete_json("system", "user", {"type": "object"})
+            await client.complete_json("system", "user", {})
+
+
+@pytest.mark.parametrize("key", [" ", "invalid key", "nonascii\u00e9", "bad\nkey"])
+async def test_invalid_credentials_fail_without_network(key: str) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Unexpected request")
+
+    configuration = Settings(synthesis_provider="anthropic", anthropic_api_key=SecretStr(key))
+    async with ProviderClient(configuration, transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(ConfigurationError):
+            await client.complete_json("s", "u", {})

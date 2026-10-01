@@ -1,6 +1,6 @@
 {
   "name": "mimir-rag",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Personal-library hybrid search and source-verified answers.",
   "author": {"name": "Seungwoo321"},
   "homepage": "https://github.com/Seungwoo321/mimir-rag",

@@ -24,6 +24,14 @@ def test_invalid_chunk_limits_and_dimensions_are_rejected() -> None:
         Settings(embedding_dimensions=2000)
 
 
+def test_library_capacity_has_an_explicit_finite_upper_bound() -> None:
+    assert Settings().max_chunks == 50_000
+    assert Settings(max_chunks=150_000).max_chunks == 150_000
+    for capacity in (0, 150_001):
+        with pytest.raises(ValidationError):
+            Settings(max_chunks=capacity)
+
+
 def test_secrets_do_not_appear_in_serialization_or_repr() -> None:
     settings = Settings(openai_api_key=SecretStr("synthetic-private-value"))
     assert "synthetic-private-value" not in repr(settings)

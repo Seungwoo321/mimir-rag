@@ -166,7 +166,7 @@ mimir-rag --db "$HOME/.local/share/mimir-rag-research/library.sqlite3" list
 - Changing the embedding model or dimensions requires a new database and re-ingestion. Preserve the old library until you have checked the new one.
 - Back up a live library with SQLite's online-backup mechanism or a consistent filesystem snapshot. Recovery details belong to the [playbook](docs/verification.md#operational-recovery).
 
-The immediate data directory must be private. The default contract supports at most **50,000 chunks**; exact dense retrieval scans the corpus in bounded batches with O(N × dimensions) cost. Input defaults are 25 MB per file, 500 PDF pages, an 8 MB page content/form-stream budget, and two million extracted characters. Image-only PDFs need external OCR; encrypted or corrupt PDFs are rejected. The [architecture](docs/architecture.md) and [schema](docs/schema.md) define persistence and parser behavior.
+The immediate data directory must be private. Library capacity defaults to **50,000 chunks** and can be configured up to **150,000** with `MIMIR_MAX_CHUNKS`. Exact dense retrieval scans the corpus in bounded batches with O(N × dimensions) cost; larger libraries require more disk space and increase query latency. Input defaults are 25 MB per file, 500 PDF pages, an 8 MB page content/form-stream budget, and two million extracted characters. Image-only PDFs need external OCR; encrypted or corrupt PDFs are rejected. The [architecture](docs/architecture.md) and [schema](docs/schema.md) define persistence and parser behavior.
 
 ## Models and configuration
 
@@ -193,7 +193,7 @@ An unset synthesis model selects `claude-haiku-4-5-20251001` for Anthropic. Swit
 | `MIMIR_TOP_K` | `6` | Retrieved passages; `ask --top-k` overrides it |
 | `MIMIR_CONTEXT_TOKEN_BUDGET` | `6000` | Serialized evidence, prompts, schemas, and review proposal |
 | `MIMIR_MIN_DENSE_SCORE` | `0.25` | Minimum cosine evidence floor; not a confidence probability |
-| `MIMIR_MAX_CHUNKS` | `50000` | Library capacity; may be lowered within the supported limit |
+| `MIMIR_MAX_CHUNKS` | `50000` | Library capacity; integer from 1 through 150000 |
 | `MIMIR_API_TIMEOUT_SECONDS` / `MIMIR_API_MAX_RETRIES` | `45` / `3` | Bounded provider attempts |
 
 Configuration is read from the invoking process environment. [`.env.example`](.env.example) contains nonsecret examples and is **not automatically loaded**. [Settings](src/mimir_rag/config.py) is the complete reference for names, defaults, and validation. An accepted answer ordinarily uses a question embedding plus separate synthesis and review calls; API billing is separate from host subscriptions.

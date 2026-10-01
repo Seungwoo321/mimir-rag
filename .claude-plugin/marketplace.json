@@ -6,7 +6,7 @@
     "name": "mimir-rag",
     "source": "./",
     "description": "Personal knowledge retrieval with verified citations.",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "author": {"name": "Seungwoo321"}
   }]
 }

@@ -39,7 +39,7 @@ class Settings(BaseModel):
     max_pdf_pages: int = Field(default=500, ge=1)
     max_pdf_stream_bytes: int = Field(default=8_000_000, ge=1)
     max_extracted_chars: int = Field(default=2_000_000, ge=1)
-    max_chunks: int = Field(default=50_000, ge=1, le=50_000)
+    max_chunks: int = Field(default=50_000, ge=1, le=150_000)
     sqlite_busy_timeout_ms: int = Field(default=5000, ge=1, le=60_000)
     dense_batch_size: int = Field(default=512, ge=1, le=4096)
     top_k: int = Field(default=6, ge=1, le=50)

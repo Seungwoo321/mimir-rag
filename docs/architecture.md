@@ -4,7 +4,7 @@
 
 Mimir-RAG is a Python 3.11+ local personal-library engine distributed as a Claude Code plugin and a Codex plugin/skill. Both hosts call the same CLI. PDF, UTF-8 text, and Markdown are supported. Cloud embedding and synthesis calls transmit source text to the configured providers; local storage does not imply offline inference. The engine never downloads URLs, follows document instructions, executes source content, or reads arbitrary files on behalf of a model.
 
-The service boundary is a single-user, single-machine library with a configurable maximum of 50,000 chunks. SQLite owns all durable data. Exact cosine search uses NumPy in bounded batches and has O(N × dimensions) cost. SQLite FTS5 provides BM25; reciprocal rank fusion (RRF) merges ranks rather than adding incomparable scores. This avoids an unmaintained sqlite-vss dependency and native extension loading. An approximate index is outside this bounded contract.
+The service boundary is a single-user, single-machine library with a default capacity of 50,000 chunks and an explicitly configurable maximum of 150,000. SQLite owns all durable data. Exact cosine search uses NumPy in bounded batches and has O(N × dimensions) cost. Larger libraries increase disk use and query latency; batching bounds working memory, not total search work. SQLite FTS5 provides BM25; reciprocal rank fusion (RRF) merges ranks rather than adding incomparable scores. This avoids an unmaintained sqlite-vss dependency and native extension loading. An approximate index is outside this bounded contract.
 
 ```mermaid
 flowchart TD

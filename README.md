@@ -160,7 +160,7 @@ The default library is `$XDG_DATA_HOME/mimir-rag/library.sqlite3`, or `~/.local/
 mimir-rag --db "$HOME/.local/share/mimir-rag-research/library.sqlite3" list
 ```
 
-- Re-ingesting the same canonical file path updates one document identity. Changed content, metadata, or chunk settings produce a complete replacement generation.
+- Re-ingesting the same canonical file path updates one document identity. Changed source content, extracted text or citation coordinates, metadata, or chunk settings produce a complete replacement generation.
 - A source moved to another path has a new identity; delete the old indexed document if you no longer need it.
 - `delete` removes the document's searchable chunks and concept entries. It leaves the original source file in place.
 - Changing the embedding model or dimensions requires a new database and re-ingestion. Preserve the old library until you have checked the new one.

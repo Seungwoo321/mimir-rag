@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mimir-rag"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local personal knowledge retrieval with verified citations for Claude Code and Codex"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "numpy>=2.1,<2.4",
   "pydantic>=2.10,<3",
-  "pypdf>=6.19,<7",
+  "pypdf[fonts]>=6.19,<7",
   "PyYAML>=6,<7",
   "tiktoken>=0.9,<1",
 ]
@@ -43,7 +43,7 @@ packages = ["src/mimir_rag"]
 "THIRD_PARTY_NOTICES.md" = "mimir_rag/data/THIRD_PARTY_NOTICES.md"
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/docs", "/skills", "/commands", "/scripts", "/.claude-plugin", "/.codex-plugin", "/.agents", "/README.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/pyproject.toml", "/uv.lock", "/.env.example"]
+include = ["/src", "/tests", "/docs", "/skills", "/commands", "/scripts", "/.claude-plugin", "/.codex-plugin", "/.agents", "/README.md", "/CHANGELOG.md", "/LICENSE", "/THIRD_PARTY_NOTICES.md", "/pyproject.toml", "/uv.lock", "/.env.example"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

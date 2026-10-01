@@ -34,7 +34,7 @@ For intentional live verification, install the CLI, set `OPENAI_API_KEY` in the 
 
 - Image-only, encrypted, malformed, oversized, and excessive-page PDFs fail with actionable errors; OCR is an explicit preprocessing operation outside the parser.
 - UTF-8 text offsets and physical PDF page offsets are checked against the immutable parsed input. Chunk overlap cannot cross a section or page boundary.
-- Identical ingestion is a no-op. Changed content and metadata replace one stable document identity. Concurrent writers cannot expose partial versions.
+- Identical ingestion is a no-op. Changed content, extracted text or citation coordinates, and metadata replace one stable document identity. Synthetic embedded CFF fonts verify Unicode decoding and same-byte decoder upgrades with a real SQLite store. Concurrent writers cannot expose partial versions.
 - FTS insert/update/delete behavior is checked after replacement and deletion. SQL-like punctuation in a question remains data.
 - Future or incomplete schemas fail without overwrite. Database operations report lock/corruption errors without printing source contents.
 - Titles, author fields, section labels, claims, and concept labels cannot inject active Markdown/HTML or arbitrary links into rendered answers.

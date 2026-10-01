@@ -480,6 +480,29 @@ def _concepts(text: str) -> list[str]:
     return labels
 
 
+def _extracted_signature(units: tuple[_Unit, ...], line_breaks: list[int]) -> str:
+    digest = hashlib.sha256(b"extracted-units-v1\n")
+    for unit in units:
+        payload = {
+            "text": unit.text[unit.start : unit.end],
+            "char_start": unit.start,
+            "char_end": unit.end,
+            "section": unit.section,
+            "page": unit.page,
+            "line_start": bisect.bisect_left(line_breaks, unit.start) + 1
+            if unit.page is None
+            else None,
+            "line_end": bisect.bisect_left(line_breaks, unit.end - 1) + 1
+            if unit.page is None
+            else None,
+        }
+        digest.update(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _prepare(
     path: Path, settings: Settings, title: str | None, author: str | None, rights: str
 ) -> tuple[Document, list[Chunk]]:
@@ -500,8 +523,14 @@ def _prepare(
         "section/tags/concepts:heuristic"
     )
     identity = hashlib.sha256(parsed.source_uri.encode()).hexdigest()
+    line_breaks = (
+        [match.start() for match in re.finditer("\n", parsed.units[0].text)]
+        if parsed.units[0].page is None
+        else []
+    )
     generation_payload = {
         "content": parsed.content_hash,
+        "extracted": _extracted_signature(parsed.units, line_breaks),
         "title": effective_title,
         "author": effective_author,
         "rights": rights_value,
@@ -523,11 +552,6 @@ def _prepare(
         ingest_signature=settings.ingest_signature,
     )
     chunks: list[Chunk] = []
-    line_breaks = (
-        [match.start() for match in re.finditer("\n", parsed.units[0].text)]
-        if parsed.units[0].page is None
-        else []
-    )
     for unit in parsed.units:
         for start, end in _chunk_spans(unit, settings):
             text = unit.text[start:end]

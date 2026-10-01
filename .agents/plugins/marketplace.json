@@ -1,0 +1,10 @@
+{
+  "name": "mimir-rag-marketplace",
+  "interface": {"displayName": "Mimir-RAG"},
+  "plugins": [{
+    "name": "mimir-rag",
+    "source": {"source": "local", "path": "./"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity"
+  }]
+}
